@@ -338,6 +338,7 @@ async function startWatcher(
         routes: {},
         dynamicRoutes: {},
         notFoundRoutes: [],
+        variantCombinationGroups: {},
         preview: opts.fsChecker.previewProps,
       },
       null,
