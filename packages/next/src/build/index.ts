@@ -3543,11 +3543,20 @@ export default async function build(
               if (isDynamicRoute(page) && route.pathname === page) continue
 
               const pageInfo = pageInfos.get(page) as PageInfo
-              // Keyed by the path the artifact was written to, which for a
-              // variant combination is prefixed with its hash.
-              const routeResult = exportResult.byPath.get(
-                getVariantOutputPath(route.pathname, route.variantValues)
+
+              // The path this route's artifacts were written to, which for a
+              // variant combination is prefixed with its hash. Everything that
+              // names those artifacts derives from it, rather than each site
+              // re-deriving it and one of them silently keeping the bare
+              // pathname: a lookup that misses returns a plausible wrong answer
+              // (no cache control, another combination's entry, a data route
+              // naming a file that was never written) instead of failing.
+              const outputPathname = getVariantOutputPath(
+                route.pathname,
+                route.variantValues
               )
+
+              const routeResult = exportResult.byPath.get(outputPathname)
               const {
                 metadata = {},
                 hasEmptyStaticShell,
@@ -3556,10 +3565,7 @@ export default async function build(
               } = routeResult ?? {}
 
               const cacheControl = getCacheControl(
-                // Keyed by the written path, so a variant combination finds the
-                // cache control its own render produced instead of missing the
-                // lookup and silently defaulting to never revalidating.
-                getVariantOutputPath(route.pathname, route.variantValues),
+                outputPathname,
                 appConfig.revalidate
               )
 
@@ -3594,7 +3600,7 @@ export default async function build(
               }
 
               if (cacheControl.revalidate !== 0) {
-                const normalizedRoute = normalizePagePath(route.pathname)
+                const normalizedRoute = normalizePagePath(outputPathname)
 
                 let dataRoute: string | null
                 if (isAppRouteHandler) {
@@ -3644,9 +3650,7 @@ export default async function build(
                 // on the clean one, which is what an undeclared combination
                 // resolves to. A route without variants writes the clean path
                 // as before.
-                prerenderManifest.routes[
-                  getVariantOutputPath(route.pathname, route.variantValues)
-                ] = {
+                prerenderManifest.routes[outputPathname] = {
                   initialStatus: status,
                   initialHeaders: meta.headers,
                   renderingMode: isAppPPREnabled
@@ -3730,19 +3734,22 @@ export default async function build(
                   continue
                 }
 
-                const normalizedRoute = normalizePagePath(route.pathname)
+                // The path this fallback shell was written to, which for a
+                // variant combination is prefixed with its hash. Named once so
+                // that the lookups below cannot disagree about which shell they
+                // are describing.
+                const outputPathname = getVariantOutputPath(
+                  route.pathname,
+                  route.variantValues
+                )
+
+                const normalizedRoute = normalizePagePath(outputPathname)
                 const parentPageInfo = pageInfos.get(page) as PageInfo
 
-                // Keyed by the path the artifact was written to, which for a
-                // variant combination is prefixed with its hash.
-                const routeResult = exportResult.byPath.get(
-                  getVariantOutputPath(route.pathname, route.variantValues)
-                )
+                const routeResult = exportResult.byPath.get(outputPathname)
                 const metadata = routeResult?.metadata
 
-                const cacheControl = getCacheControl(
-                  getVariantOutputPath(route.pathname, route.variantValues)
-                )
+                const cacheControl = getCacheControl(outputPathname)
 
                 let dataRoute: string | null = null
                 if (!isAppRouteHandler) {
@@ -3872,19 +3879,6 @@ export default async function build(
                     ? cacheControl
                     : undefined
 
-                // Each combination has a shell of its own, so it needs an entry
-                // of its own: a single entry per route pattern could only
-                // describe one of them, and whichever was written last would
-                // decide how every other combination is served.
-                //
-                // The field itself stays the route pattern, which is what the
-                // runtime folds the request's combination into. Consumers that
-                // need the artifact rather than the route derive it from the key.
-                const fallbackOutputPath = getVariantOutputPath(
-                  route.pathname,
-                  route.variantValues
-                )
-
                 const fallback: Fallback = fallbackModeToFallbackField(
                   fallbackMode,
                   route.pathname
@@ -3918,7 +3912,14 @@ export default async function build(
                   }
                 }
 
-                prerenderManifest.dynamicRoutes[fallbackOutputPath] = {
+                // Each combination has a shell of its own, so it needs an
+                // entry of its own: a single entry per route pattern could only
+                // describe one of them, and whichever was written last would
+                // decide how every other combination is served.
+                //
+                // The `fallback` field itself stays the route pattern, which is
+                // what the runtime folds the request's combination into.
+                prerenderManifest.dynamicRoutes[outputPathname] = {
                   experimentalPPR: isRoutePPREnabled,
                   remainingPrerenderableParams:
                     route.remainingPrerenderableParams,
@@ -3935,7 +3936,7 @@ export default async function build(
                   // matching would then pick a combination's entry for a request
                   // that resolved to a different one.
                   routeRegex: normalizeRouteRegex(
-                    getNamedRouteRegex(fallbackOutputPath, {
+                    getNamedRouteRegex(outputPathname, {
                       prefixRouteKeys: false,
                     }).re.source
                   ),
